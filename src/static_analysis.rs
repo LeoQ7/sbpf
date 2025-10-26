@@ -261,16 +261,17 @@ impl<'a> Analysis<'a> {
                         }
                     }
                 }
-                ebpf::CALL_REG => {
-                    self.cfg_nodes.entry(insn.ptr + 1).or_default();
-                    let destinations = if flatten_call_graph {
-                        vec![insn.ptr + 1, self.super_root]
-                    } else {
-                        vec![insn.ptr + 1]
-                    };
+                // Deleted in previous LeoQ7 implementation
+                // ebpf::CALL_REG => {
+                //     self.cfg_nodes.entry(insn.ptr + 1).or_default();
+                //     let destinations = if flatten_call_graph {
+                //         vec![insn.ptr + 1, self.super_root]
+                //     } else {
+                //         vec![insn.ptr + 1]
+                //     };
 
-                    cfg_edges.insert(insn.ptr, (insn.opc, destinations));
-                }
+                //     cfg_edges.insert(insn.ptr, (insn.opc, destinations));
+                // }
                 ebpf::EXIT if !sbpf_version.static_syscalls() => {
                     self.cfg_nodes.entry(insn.ptr + 1).or_default();
                     cfg_edges.insert(insn.ptr, (insn.opc, Vec::new()));
