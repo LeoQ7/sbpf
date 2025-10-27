@@ -245,9 +245,14 @@ impl<'a> Analysis<'a> {
         for (_pc, insn) in self.instructions.iter().enumerate() {
             let target_pc = (insn.ptr as isize + insn.off as isize + 1) as usize;
             match insn.opc {
-                ebpf::CALL_IMM => { 
+                ebpf::CALL_IMM => {
                     if !sbpf_version.static_syscalls() {
-                        if let Some((function_name, _)) = self.executable.get_loader().get_function_registry().lookup_by_key(insn.imm as u32) {
+                        if let Some((function_name, _)) = self
+                            .executable
+                            .get_loader()
+                            .get_function_registry()
+                            .lookup_by_key(insn.imm as u32)
+                        {
                             let syscall = String::from_utf8_lossy(function_name).to_string();
                             if ["abort", "sol_panic_"].contains(&syscall.as_str()) {
                                 self.cfg_nodes.entry(insn.ptr + 1).or_default();
@@ -256,6 +261,17 @@ impl<'a> Analysis<'a> {
                         }
                     }
                 }
+                // Deleted in previous LeoQ7 implementation
+                // ebpf::CALL_REG => {
+                //     self.cfg_nodes.entry(insn.ptr + 1).or_default();
+                //     let destinations = if flatten_call_graph {
+                //         vec![insn.ptr + 1, self.super_root]
+                //     } else {
+                //         vec![insn.ptr + 1]
+                //     };
+
+                //     cfg_edges.insert(insn.ptr, (insn.opc, destinations));
+                // }
                 ebpf::EXIT if !sbpf_version.static_syscalls() => {
                     self.cfg_nodes.entry(insn.ptr + 1).or_default();
                     cfg_edges.insert(insn.ptr, (insn.opc, Vec::new()));

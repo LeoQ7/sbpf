@@ -118,7 +118,7 @@ fn test_code_length_estimate() {
                     opcode = 0x85;
                     (0x00, Some(0x91020CDD))
                 }
-                0xF5 => {
+                0xF5 if !sbpf_version.static_syscalls() => {
                     // Put invalid function calls on a separate loop iteration
                     opcode = 0x85;
                     (0x00, Some(0x91020CD0))
@@ -174,10 +174,7 @@ fn test_code_length_estimate() {
                 executable.get_loader(),
                 executable.get_sbpf_version(),
             );
-            println!(
-                "{:02X};{:>7.3};{}",
-                opcode, machine_code_length_per_instruction, assembly
-            );
+            println!("{opcode:02X};{machine_code_length_per_instruction:>7.3};{assembly}");
         }
     }
 }

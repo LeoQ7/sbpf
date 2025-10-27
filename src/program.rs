@@ -19,6 +19,8 @@ pub enum SBPFVersion {
     V2,
     /// SIMD-0178, SIMD-0179, SIMD-0189
     V3,
+    /// SIMD-0177
+    V4,
     /// Used for future versions
     Reserved,
 }
@@ -64,8 +66,11 @@ impl SBPFVersion {
     }
 
     /// Enable SIMD-0178: SBPF Static Syscalls
-    /// Enable SIMD-0179: SBPF stricter verification constraints
     pub fn static_syscalls(self) -> bool {
+        self >= SBPFVersion::V3
+    }
+    /// Enable SIMD-0179: SBPF stricter verification constraints
+    pub fn enable_stricter_verification(self) -> bool {
         self >= SBPFVersion::V3
     }
     /// Enable SIMD-0189: SBPF stricter ELF headers

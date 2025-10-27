@@ -15,7 +15,6 @@
 
 #[cfg(not(feature = "shuttle-test"))]
 use rand::{thread_rng, Rng};
-
 #[cfg(feature = "shuttle-test")]
 use shuttle::rand::{thread_rng, Rng};
 
@@ -427,19 +426,15 @@ impl<'a, C: ContextObject> JitCompiler<'a, C> {
 
         self.emit_subroutines();
 
-        let mut function_iter = self.executable.get_function_registry().keys().map(|insn_ptr| insn_ptr as usize).peekable();
         while self.pc * ebpf::INSN_SIZE < self.program.len() {
             if self.offset_in_text_section + MAX_MACHINE_CODE_LENGTH_PER_INSTRUCTION * 2 >= self.result.text_section.len() {
                 return Err(EbpfError::ExhaustedTextSegment(self.pc));
             }
             let mut insn = ebpf::get_insn_unchecked(self.program, self.pc);
             self.result.pc_section[self.pc] = self.offset_in_text_section as u32;
-            if self.executable.get_sbpf_version().static_syscalls() {
-                if function_iter.peek() == Some(&self.pc) {
-                    function_iter.next();
-                } else {
-                    self.result.pc_section[self.pc] |= 1 << 31;
-                }
+            if self.executable.get_sbpf_version().enable_stricter_verification() &&
+               !insn.is_function_start_marker() {
+                self.result.pc_section[self.pc] |= 1 << 31;
             }
 
             // Regular instruction meter checkpoints to prevent long linear runs from exceeding their budget
@@ -767,20 +762,21 @@ impl<'a, C: ContextObject> JitCompiler<'a, C> {
                 ebpf::JSLE_REG   => self.emit_conditional_branch_reg(0x8e, false, src, dst, target_pc),
                 ebpf::CALL_IMM => {
                     // For JIT, external functions MUST be registered at compile time.
-                    if let (false, Some((_, function))) =
-                            (self.executable.get_sbpf_version().static_syscalls(),
-                                self.executable.get_loader().get_function_registry().lookup_by_key(insn.imm as u32)) {
+                    let key = self
+                        .executable
+                        .get_sbpf_version()
+                        .calculate_call_imm_target_pc(self.pc, insn.imm);
+                    if self.executable.get_sbpf_version().static_syscalls() {
+                        // BPF to BPF call
+                        self.emit_internal_call(Value::Constant64(key as i64, true));
+                    } else if let Some((_, function)) =
+                            self.executable.get_loader().get_function_registry().lookup_by_key(insn.imm as u32) {
                         // SBPFv0 syscall
                         self.emit_syscall_dispatch(function);
                     } else if let Some((_function_name, target_pc)) =
                             self.executable
                                 .get_function_registry()
-                                .lookup_by_key(
-                                    self
-                                        .executable
-                                        .get_sbpf_version()
-                                        .calculate_call_imm_target_pc(self.pc, insn.imm)
-                            ) {
+                                .lookup_by_key(key) {
                         // BPF to BPF call
                         self.emit_internal_call(Value::Constant64(target_pc as i64, true));
                     } else {
@@ -1006,11 +1002,6 @@ impl<'a, C: ContextObject> JitCompiler<'a, C> {
             self.emit_ins(X86Instruction::push(*reg, None));
         }
 
-        // Align RSP to 16 bytes
-        self.emit_ins(X86Instruction::push(RSP, None));
-        self.emit_ins(X86Instruction::push(RSP, Some(X86IndirectAccess::OffsetIndexShift(0, RSP, 0))));
-        self.emit_ins(X86Instruction::alu_immediate(OperandSize::S64, 0x81, 4, RSP, -16, None));
-
         let stack_arguments = arguments.len().saturating_sub(ARGUMENT_REGISTERS.len()) as i64;
         if stack_arguments % 2 != 0 {
             // If we're going to pass an odd number of stack args we need to pad
@@ -1096,7 +1087,6 @@ impl<'a, C: ContextObject> JitCompiler<'a, C> {
         // Restore registers from stack
         self.emit_ins(X86Instruction::alu_immediate(OperandSize::S64, 0x81, 0, RSP,
             if stack_arguments % 2 != 0 { stack_arguments + 1 } else { stack_arguments } * 8, None));
-        self.emit_ins(X86Instruction::load(OperandSize::S64, RSP, RSP, X86IndirectAccess::OffsetIndexShift(8, RSP, 0)));
 
         for reg in saved_registers.iter().rev() {
             self.emit_ins(X86Instruction::pop(*reg));
@@ -1154,7 +1144,7 @@ impl<'a, C: ContextObject> JitCompiler<'a, C> {
     fn emit_address_translation(&mut self, dst: Option<X86Register>, vm_addr: Value, len: u64, value: Option<Value>) {
         debug_assert_ne!(dst.is_some(), value.is_some());
 
-        let stack_slot_of_value_to_store = X86IndirectAccess::OffsetIndexShift(-112, RSP, 0);
+        let stack_slot_of_value_to_store = X86IndirectAccess::OffsetIndexShift(-96, RSP, 0);
         match value {
             Some(Value::Register(reg)) => {
                 self.emit_ins(X86Instruction::store(OperandSize::S64, reg, RSP, stack_slot_of_value_to_store));
@@ -1611,7 +1601,7 @@ impl<'a, C: ContextObject> JitCompiler<'a, C> {
             } else { // AccessType::Store
                 if *anchor_base == 8 {
                     // Second half of emit_sanitized_load_immediate(stack_slot_of_value_to_store, constant)
-                    self.emit_ins(X86Instruction::alu_immediate(OperandSize::S64, 0x81, 0, RSP, lower_key, Some(X86IndirectAccess::OffsetIndexShift(-96, RSP, 0))));
+                    self.emit_ins(X86Instruction::alu_immediate(OperandSize::S64, 0x81, 0, RSP, lower_key, Some(X86IndirectAccess::OffsetIndexShift(-80, RSP, 0))));
                 }
                 let store = match len {
                     1 => MemoryMapping::store::<u8> as *const u8 as i64,
